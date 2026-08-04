@@ -36,13 +36,7 @@ $app = require_once __DIR__.'/../bootstrap/app.php';
 // Bind custom storage path for Vercel
 $app->useStoragePath('/tmp/storage');
 
-$kernel = $app->make(Kernel::class);
-
-$response = $kernel->handle(
-    $request = Request::capture()
-)->send();
-
-// Auto seed tables if not yet seeded
+// Auto seed tables if DB not yet initialized
 try {
     if (!Schema::hasTable('restaurant_tables')) {
         Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
@@ -50,5 +44,11 @@ try {
 } catch (\Throwable $e) {
     // Ignore seeder exceptions
 }
+
+$kernel = $app->make(Kernel::class);
+
+$response = $kernel->handle(
+    $request = Request::capture()
+)->send();
 
 $kernel->terminate($request, $response);
