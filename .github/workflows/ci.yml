@@ -1,0 +1,73 @@
+name: CI/CD Pipeline - Fullstack Restaurant Queue
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-build:
+    name: Build & Run Unit Tests (Backend & Frontend)
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_restaurant
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_sqlite, pdo_mysql, bcmath, redis
+          coverage: none
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Copy .env.example
+        run: php -r "file_exists('.env') || copy('.env.example', '.env');"
+
+      - name: Install Composer Dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Generate Application Key
+        run: php artisan key:generate
+
+      - name: Run Backend Unit Tests (PHPUnit - Min 8 Tests)
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+        run: php artisan test --testsuite=Feature
+
+      - name: Install NPM Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run Frontend Unit Tests (Vitest - Min 6 Tests)
+        run: npm run test:frontend
+
+      - name: Build Frontend Bundle (Vite)
+        run: npm run build
+
+      - name: Deploy Staging (Optional Step)
+        run: |
+          echo "CI/CD Pipeline Passed Successfully! App bundle is ready for staging deployment."
