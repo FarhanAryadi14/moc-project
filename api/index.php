@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\Schema;
 
 define('LARAVEL_START', microtime(true));
 
+// Override SCRIPT_NAME and PHP_SELF so Laravel's request parser doesn't strip /api from URL in Vercel CGI
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+
 // Setup writable storage directories in /tmp for Vercel Serverless
 $directories = [
     '/tmp/storage/app/public',
@@ -49,11 +53,6 @@ $kernel = $app->make(Kernel::class);
 
 $request = Request::capture();
 $response = $kernel->handle($request);
-
-// Explicitly set text/html Content-Type for HTML responses to prevent Vercel file download prompt
-if (!$response->headers->has('Content-Type') || str_contains($response->headers->get('Content-Type'), 'text/plain')) {
-    $response->headers->set('Content-Type', 'text/html; charset=utf-8');
-}
 
 $response->send();
 $kernel->terminate($request, $response);
