@@ -65,6 +65,8 @@ jobs:
         run: php artisan test --testsuite=Feature
 
       - name: Run Frontend Unit Tests (Vitest - Min 6 Tests)
+        env:
+          LARAVEL_BYPASS_ENV_CHECK: 1
         run: npm run test:frontend
 
       - name: Deploy Staging Readiness Check
