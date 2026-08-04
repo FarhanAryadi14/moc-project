@@ -26,7 +26,8 @@
   ],
   "env": {
     "APP_ENV": "production",
-    "APP_DEBUG": "true",
+    "APP_DEBUG": "false",
+    "HTTPS": "on",
     "APP_KEY": "base64:muavHDI4Al8/H7hGJJoqbvRadoUICb58JZPAuONfWX8=",
     "APP_CONFIG_CACHE": "/tmp/config.php",
     "APP_EVENTS_CACHE": "/tmp/events.php",
