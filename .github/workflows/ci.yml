@@ -53,21 +53,20 @@ jobs:
       - name: Generate Application Key
         run: php artisan key:generate
 
+      - name: Install NPM Dependencies & Build Assets
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
       - name: Run Backend Unit Tests (PHPUnit - Min 8 Tests)
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: ':memory:'
         run: php artisan test --testsuite=Feature
 
-      - name: Install NPM Dependencies
-        run: npm ci --legacy-peer-deps
-
       - name: Run Frontend Unit Tests (Vitest - Min 6 Tests)
         run: npm run test:frontend
 
-      - name: Build Frontend Bundle (Vite)
-        run: npm run build
-
-      - name: Deploy Staging (Optional Step)
+      - name: Deploy Staging Readiness Check
         run: |
-          echo "CI/CD Pipeline Passed Successfully! App bundle is ready for staging deployment."
+          echo "CI/CD Pipeline Passed Successfully! App bundle is ready for deployment."
