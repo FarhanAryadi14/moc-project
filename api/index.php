@@ -26,10 +26,16 @@ foreach ($directories as $dir) {
     }
 }
 
-// Create empty SQLite DB in /tmp if missing
-$sqlitePath = '/tmp/database.sqlite';
-if (!file_exists($sqlitePath)) {
-    @touch($sqlitePath);
+// Copy pre-migrated sqlite database template from codebase to /tmp/database.sqlite if missing
+$targetDb = '/tmp/database.sqlite';
+$sourceDb = __DIR__.'/../database/database.sqlite';
+
+if (!file_exists($targetDb)) {
+    if (file_exists($sourceDb)) {
+        @copy($sourceDb, $targetDb);
+    } else {
+        @touch($targetDb);
+    }
 }
 
 // Load Composer Autoloader
@@ -41,14 +47,14 @@ $app = require_once __DIR__.'/../bootstrap/app.php';
 // Bind custom storage path for Vercel
 $app->useStoragePath('/tmp/storage');
 
-// Auto seed tables if DB not yet initialized
+// Force migration and seeding if tables missing in /tmp
 try {
     if (!Schema::hasTable('restaurant_tables')) {
         Artisan::call('migrate', ['--force' => true]);
         Artisan::call('db:seed', ['--force' => true]);
     }
 } catch (\Throwable $e) {
-    // Ignore migration errors during boot
+    // Ignore schema exceptions
 }
 
 $kernel = $app->make(Kernel::class);
