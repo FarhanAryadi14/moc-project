@@ -27,8 +27,9 @@ foreach ($directories as $dir) {
 }
 
 // Create empty SQLite DB in /tmp if missing
-if (!file_exists('/tmp/database.sqlite')) {
-    @touch('/tmp/database.sqlite');
+$sqlitePath = '/tmp/database.sqlite';
+if (!file_exists($sqlitePath)) {
+    @touch($sqlitePath);
 }
 
 // Load Composer Autoloader
@@ -43,10 +44,11 @@ $app->useStoragePath('/tmp/storage');
 // Auto seed tables if DB not yet initialized
 try {
     if (!Schema::hasTable('restaurant_tables')) {
-        Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
+        Artisan::call('migrate', ['--force' => true]);
+        Artisan::call('db:seed', ['--force' => true]);
     }
 } catch (\Throwable $e) {
-    // Ignore seeder exceptions
+    // Ignore migration errors during boot
 }
 
 $kernel = $app->make(Kernel::class);
