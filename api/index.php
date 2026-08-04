@@ -47,8 +47,13 @@ try {
 
 $kernel = $app->make(Kernel::class);
 
-$response = $kernel->handle(
-    $request = Request::capture()
-)->send();
+$request = Request::capture();
+$response = $kernel->handle($request);
 
+// Explicitly set text/html Content-Type for HTML responses to prevent Vercel file download prompt
+if (!$response->headers->has('Content-Type') || str_contains($response->headers->get('Content-Type'), 'text/plain')) {
+    $response->headers->set('Content-Type', 'text/html; charset=utf-8');
+}
+
+$response->send();
 $kernel->terminate($request, $response);
