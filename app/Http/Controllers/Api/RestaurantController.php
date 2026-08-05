@@ -65,17 +65,24 @@ class RestaurantController extends Controller
     /**
      * GET /api/status
      * Returns live status of all tables, active dining sessions, and priority waiting queue.
-     * Uses Eloquent activeSession relationship (latestOfMany) to guarantee active sessions render on page refresh.
+     * Performance: Fetches active sessions keyed by table_id in 1 query without fragile tuple subqueries.
      */
     public function status(): JsonResponse
     {
         $now = Carbon::now();
 
-        $tablesData = RestaurantTable::with(['activeSession.party'])
-            ->orderBy('code', 'asc')
+        // Fetch all active dining sessions keyed by restaurant_table_id in 1 reliable query
+        $activeSessions = DiningSession::with('party')
+            ->where('status', 'active')
+            ->latest('id')
             ->get()
-            ->map(function (RestaurantTable $table) use ($now) {
-                $activeSession = $table->activeSession;
+            ->keyBy('restaurant_table_id');
+
+        $tablesData = RestaurantTable::orderBy('code', 'asc')
+            ->get()
+            ->map(function (RestaurantTable $table) use ($now, $activeSessions) {
+                /** @var DiningSession|null $activeSession */
+                $activeSession = $activeSessions->get($table->id);
                 $isOccupied = $activeSession !== null;
                 $colorStatus = 'hijau';
                 $sessionData = null;
