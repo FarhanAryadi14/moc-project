@@ -46,7 +46,7 @@ export default function HistoryTable({
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-slate-400" />
           <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
-            Riwayat Sesi Makan (Sortable Data Grid)
+            Riwayat Sesi Makan
           </h2>
         </div>
 

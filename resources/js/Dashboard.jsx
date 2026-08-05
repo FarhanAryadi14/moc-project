@@ -230,16 +230,13 @@ export default function Dashboard() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-white tracking-tight">
-                Resto POS &amp; Queue Control
+                Resto Queue Control
               </h1>
               <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" />
                 Live Sync
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Laravel Monolith + React (Vite) &bull; Table Allocation &amp; Priority Queue
-            </p>
           </div>
         </div>
 
