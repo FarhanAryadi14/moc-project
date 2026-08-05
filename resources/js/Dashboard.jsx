@@ -32,6 +32,23 @@ export default function Dashboard() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Load cached state from LocalStorage on mount to prevent Vercel cold-start flickering
+  useEffect(() => {
+    try {
+      const cachedTables = localStorage.getItem('resto_tables');
+      const cachedQueue = localStorage.getItem('resto_queue');
+      const cachedSummary = localStorage.getItem('resto_summary');
+      const cachedHistory = localStorage.getItem('resto_history');
+
+      if (cachedTables) setTables(JSON.parse(cachedTables));
+      if (cachedQueue) setQueue(JSON.parse(cachedQueue));
+      if (cachedSummary) setSummary(JSON.parse(cachedSummary));
+      if (cachedHistory) setHistoryItems(JSON.parse(cachedHistory));
+    } catch (e) {
+      console.error('LocalStorage load error:', e);
+    }
+  }, []);
+
   // Debounce history search input (200ms delay)
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -40,22 +57,58 @@ export default function Dashboard() {
     return () => clearTimeout(handler);
   }, [historySearch]);
 
-  // Fetch Status Data (/api/status)
+  // Fetch Status Data (/api/status) with state merging for Vercel serverless persistence
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/status');
       const data = await res.json();
       if (data.success) {
-        setTables(data.data.tables);
+        setTables((prevTables) => {
+          const serverTables = data.data.tables;
+          const merged = serverTables.map((serverT) => {
+            if (serverT.status === 'occupied' && serverT.active_session) {
+              return serverT;
+            }
+            // Preserve active session if cold-started Vercel lambda returned empty ephemeral SQLite state
+            const prevT = prevTables.find((p) => p.id === serverT.id);
+            if (prevT && prevT.status === 'occupied' && prevT.active_session) {
+              return prevT;
+            }
+            return serverT;
+          });
+
+          try {
+            localStorage.setItem('resto_tables', JSON.stringify(merged));
+          } catch (e) {}
+
+          return merged;
+        });
+
         setQueue(data.data.queue);
-        setSummary(data.data.summary);
+
+        // Recalculate summary metrics based on merged table states
+        setTables((currentTables) => {
+          const occupiedCount = currentTables.filter((t) => t.status === 'occupied').length;
+          const availableCount = currentTables.length - occupiedCount;
+          const newSummary = {
+            total_tables: currentTables.length || 4,
+            occupied_tables: occupiedCount,
+            available_tables: availableCount,
+            waiting_parties: data.data.queue ? data.data.queue.length : 0,
+          };
+          setSummary(newSummary);
+          try {
+            localStorage.setItem('resto_summary', JSON.stringify(newSummary));
+          } catch (e) {}
+          return currentTables;
+        });
       }
     } catch (err) {
       console.error('Failed to fetch status:', err);
     }
   }, []);
 
-  // Fetch History Data (/api/history)
+  // Fetch History Data (/api/history) with state merging
   const fetchHistory = useCallback(async () => {
     try {
       const query = new URLSearchParams({
@@ -70,7 +123,31 @@ export default function Dashboard() {
       const res = await fetch(`/api/history?${query.toString()}`);
       const data = await res.json();
       if (data.success) {
-        setHistoryItems(data.data.items);
+        setHistoryItems((prevHistory) => {
+          const serverItems = data.data.items;
+          const mergedMap = new Map();
+
+          // Load previous history items first
+          if (Array.isArray(prevHistory)) {
+            prevHistory.forEach((item) => {
+              if (item && item.id) mergedMap.set(item.id, item);
+            });
+          }
+
+          // Merge server items (overwriting with latest server status)
+          if (Array.isArray(serverItems)) {
+            serverItems.forEach((item) => {
+              if (item && item.id) mergedMap.set(item.id, item);
+            });
+          }
+
+          const result = Array.from(mergedMap.values()).sort((a, b) => b.id - a.id);
+          try {
+            localStorage.setItem('resto_history', JSON.stringify(result));
+          } catch (e) {}
+          return result;
+        });
+
         setPagination(data.data.pagination);
       }
     } catch (err) {
@@ -78,12 +155,12 @@ export default function Dashboard() {
     }
   }, [currentPage, debouncedHistorySearch, statusFilter, partySizeFilter, sortBy, sortDir]);
 
-  // Continuous 1-second live polling interval for seamless background sync
+  // Clean 3-second live polling interval (prevents request flooding on Vercel)
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(() => {
       fetchStatus();
-    }, 1000);
+    }, 3000);
 
     return () => clearInterval(interval);
   }, [fetchStatus]);
@@ -99,7 +176,7 @@ export default function Dashboard() {
     setIsRefreshing(false);
   };
 
-  // Arrive Customer (/api/arrive) - Instant Realtime Sync with 100ms commit window
+  // Arrive Customer (/api/arrive)
   const handleArrive = async (payload) => {
     try {
       const res = await fetch('/api/arrive', {
@@ -113,7 +190,7 @@ export default function Dashboard() {
         showToast(data.message, 'success');
         setIsArriveModalOpen(false);
 
-        // Immediate fetch + 150ms follow-up for 100% SQLite transaction commit guarantee
+        // Immediate fetch + 150ms follow-up for 100% sync
         await Promise.all([fetchStatus(), fetchHistory()]);
         setTimeout(() => {
           fetchStatus();
@@ -127,7 +204,7 @@ export default function Dashboard() {
     }
   };
 
-  // Serve or Drop Party (/api/serve) - Instant Realtime Sync
+  // Serve or Drop Party (/api/serve)
   const handleDropParty = async (party, table) => {
     if (party.party_size > table.capacity) {
       showToast(`Party size ${party.party_size} orang melebihi kapasitas Meja ${table.code} (${table.capacity} pax).`, 'error');
@@ -165,7 +242,7 @@ export default function Dashboard() {
     }
   };
 
-  // Force Complete Table (/api/serve) - Instant Realtime Sync
+  // Force Complete Table (/api/serve)
   const handleForceComplete = async (table) => {
     try {
       const res = await fetch('/api/serve', {
@@ -179,6 +256,33 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
+
+        // Explicitly clear table in local state & localStorage upon force complete
+        setTables((prevTables) => {
+          const updated = prevTables.map((t) =>
+            t.id === table.id
+              ? { ...t, status: 'available', color_status: 'hijau', active_session: null }
+              : t
+          );
+          try {
+            localStorage.setItem('resto_tables', JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
+
+        // Update history item status locally to FORCE_COMPLETED
+        setHistoryItems((prevHistory) => {
+          const updated = prevHistory.map((item) =>
+            item.table_code === table.code && item.status === 'active'
+              ? { ...item, status: 'force_completed' }
+              : item
+          );
+          try {
+            localStorage.setItem('resto_history', JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
+
         await Promise.all([fetchStatus(), fetchHistory()]);
         setTimeout(() => {
           fetchStatus();
@@ -192,7 +296,7 @@ export default function Dashboard() {
     }
   };
 
-  // Auto Serve Highest Priority (/api/serve) - Instant Realtime Sync
+  // Auto Serve Highest Priority (/api/serve)
   const handleAutoServe = async () => {
     try {
       const res = await fetch('/api/serve', {
