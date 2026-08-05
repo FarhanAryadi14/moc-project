@@ -32,11 +32,11 @@ export default function Dashboard() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Debounce history search input (250ms delay) to prevent UIlag
+  // Debounce history search input (200ms delay)
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedHistorySearch(historySearch);
-    }, 250);
+    }, 200);
     return () => clearTimeout(handler);
   }, [historySearch]);
 
@@ -78,12 +78,12 @@ export default function Dashboard() {
     }
   }, [currentPage, debouncedHistorySearch, statusFilter, partySizeFilter, sortBy, sortDir]);
 
-  // Independent status polling (runs smoothly every 3s without interrupting search/sort)
+  // Fast 1-second live polling interval for seamless real-time synchronization
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(() => {
       fetchStatus();
-    }, 3000);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [fetchStatus]);
@@ -99,7 +99,7 @@ export default function Dashboard() {
     setIsRefreshing(false);
   };
 
-  // Arrive Customer (/api/arrive)
+  // Arrive Customer (/api/arrive) - Instant Realtime Sync
   const handleArrive = async (payload) => {
     try {
       const res = await fetch('/api/arrive', {
@@ -111,9 +111,9 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
+        // Await state refresh synchronously BEFORE closing modal so data updates instantly
+        await Promise.all([fetchStatus(), fetchHistory()]);
         setIsArriveModalOpen(false);
-        fetchStatus();
-        fetchHistory();
       } else {
         showToast(data.message || 'Gagal menyimpan kedatangan', 'error');
       }
@@ -122,7 +122,7 @@ export default function Dashboard() {
     }
   };
 
-  // Serve or Drop Party (/api/serve)
+  // Serve or Drop Party (/api/serve) - Instant Realtime Sync
   const handleDropParty = async (party, table) => {
     if (party.party_size > table.capacity) {
       showToast(`Party size ${party.party_size} orang melebihi kapasitas Meja ${table.code} (${table.capacity} pax).`, 'error');
@@ -147,8 +147,7 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
-        fetchStatus();
-        fetchHistory();
+        await Promise.all([fetchStatus(), fetchHistory()]);
       } else {
         showToast(data.message || 'Gagal mendudukkan party.', 'error');
       }
@@ -157,7 +156,7 @@ export default function Dashboard() {
     }
   };
 
-  // Force Complete Table (/api/serve)
+  // Force Complete Table (/api/serve) - Instant Realtime Sync
   const handleForceComplete = async (table) => {
     try {
       const res = await fetch('/api/serve', {
@@ -171,8 +170,7 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
-        fetchStatus();
-        fetchHistory();
+        await Promise.all([fetchStatus(), fetchHistory()]);
       } else {
         showToast(data.message || 'Gagal force complete meja.', 'error');
       }
@@ -181,7 +179,7 @@ export default function Dashboard() {
     }
   };
 
-  // Auto Serve Highest Priority (/api/serve)
+  // Auto Serve Highest Priority (/api/serve) - Instant Realtime Sync
   const handleAutoServe = async () => {
     try {
       const res = await fetch('/api/serve', {
@@ -193,8 +191,7 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
-        fetchStatus();
-        fetchHistory();
+        await Promise.all([fetchStatus(), fetchHistory()]);
       } else {
         showToast(data.message || 'Tidak ada meja/queue yang cocok.', 'error');
       }
