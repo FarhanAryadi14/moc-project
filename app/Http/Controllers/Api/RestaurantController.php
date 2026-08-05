@@ -65,30 +65,31 @@ class RestaurantController extends Controller
     /**
      * GET /api/status
      * Returns live status of all tables, active dining sessions, and priority waiting queue.
-     * Performance: Eager loaded in 1 batch query without N+1 overhead.
+     * Uses Eloquent activeSession relationship (latestOfMany) to guarantee active sessions render on page refresh.
      */
     public function status(): JsonResponse
     {
         $now = Carbon::now();
 
-        // Single batch query with eager loaded active sessions & parties (0 N+1 overhead)
-        $tablesData = RestaurantTable::orderBy('code', 'asc')
+        $tablesData = RestaurantTable::with(['activeSession.party'])
+            ->orderBy('code', 'asc')
             ->get()
             ->map(function (RestaurantTable $table) use ($now) {
-                $activeSession = DiningSession::with('party')
-                    ->where('restaurant_table_id', $table->id)
-                    ->where('status', 'active')
-                    ->latest()
-                    ->first();
-
+                $activeSession = $table->activeSession;
+                $isOccupied = $activeSession !== null;
+                $colorStatus = 'hijau';
                 $sessionData = null;
-                $colorStatus = 'hijau'; // available
 
-                if ($activeSession) {
+                if ($isOccupied) {
+                    // Ensure database table status stays in sync
+                    if ($table->status !== 'occupied') {
+                        $table->update(['status' => 'occupied']);
+                    }
+
                     $startedAt = $activeSession->started_at;
                     $estimatedEndAt = $activeSession->estimated_end_at;
-                    $totalDurationSec = $startedAt->diffInSeconds($estimatedEndAt);
-                    $elapsedSec = $startedAt->diffInSeconds($now, false);
+                    $totalDurationSec = max(1, $startedAt->diffInSeconds($estimatedEndAt));
+                    $elapsedSec = max(0, $startedAt->diffInSeconds($now, false));
                     $remainingSec = max(0, $now->diffInSeconds($estimatedEndAt, false));
 
                     if ($startedAt->diffInMinutes($now) <= 2) {
@@ -111,7 +112,7 @@ class RestaurantController extends Controller
                         'dining_duration_minutes' => $activeSession->dining_duration_minutes,
                         'total_duration_sec' => $totalDurationSec,
                         'remaining_sec' => $remainingSec,
-                        'elapsed_sec' => max(0, $elapsedSec),
+                        'elapsed_sec' => $elapsedSec,
                     ];
                 }
 
@@ -119,8 +120,8 @@ class RestaurantController extends Controller
                     'id' => $table->id,
                     'code' => $table->code,
                     'capacity' => $table->capacity,
-                    'status' => $table->status,
-                    'color_status' => $colorStatus,
+                    'status' => $isOccupied ? 'occupied' : 'available',
+                    'color_status' => $isOccupied ? $colorStatus : 'hijau',
                     'active_session' => $sessionData,
                 ];
             });
@@ -260,7 +261,6 @@ class RestaurantController extends Controller
     /**
      * GET /api/history
      * Multi-column sortable and searchable history of dining sessions.
-     * Optimized with direct joins to prevent N+1 queries and guarantee instant response times.
      */
     public function history(Request $request): JsonResponse
     {
