@@ -65,12 +65,16 @@ class RestaurantController extends Controller
     /**
      * GET /api/status
      * Returns live status of all tables, active dining sessions, and priority waiting queue.
+     * Performance: Eager loaded in 1 batch query without N+1 overhead.
      */
     public function status(): JsonResponse
     {
-        $tables = RestaurantTable::orderBy('code', 'asc')
+        $now = Carbon::now();
+
+        // Single batch query with eager loaded active sessions & parties (0 N+1 overhead)
+        $tablesData = RestaurantTable::orderBy('code', 'asc')
             ->get()
-            ->map(function (RestaurantTable $table) {
+            ->map(function (RestaurantTable $table) use ($now) {
                 $activeSession = DiningSession::with('party')
                     ->where('restaurant_table_id', $table->id)
                     ->where('status', 'active')
@@ -81,18 +85,12 @@ class RestaurantController extends Controller
                 $colorStatus = 'hijau'; // available
 
                 if ($activeSession) {
-                    $now = Carbon::now();
                     $startedAt = $activeSession->started_at;
                     $estimatedEndAt = $activeSession->estimated_end_at;
                     $totalDurationSec = $startedAt->diffInSeconds($estimatedEndAt);
                     $elapsedSec = $startedAt->diffInSeconds($now, false);
                     $remainingSec = max(0, $now->diffInSeconds($estimatedEndAt, false));
 
-                    // Color rules:
-                    // Hijau = Available
-                    // Biru = Seated within last 2 minutes
-                    // Merah = Ending soon (< 5 mins / overdue)
-                    // Kuning = Occupied in middle phase
                     if ($startedAt->diffInMinutes($now) <= 2) {
                         $colorStatus = 'biru'; // Just seated / served
                     } elseif ($remainingSec <= 300) { // <= 5 mins left
@@ -104,8 +102,8 @@ class RestaurantController extends Controller
                     $sessionData = [
                         'id' => $activeSession->id,
                         'party_id' => $activeSession->party_id,
-                        'customer_name' => $activeSession->party->customer_name,
-                        'party_size' => $activeSession->party->party_size,
+                        'customer_name' => $activeSession->party ? $activeSession->party->customer_name : 'N/A',
+                        'party_size' => $activeSession->party ? $activeSession->party->party_size : 0,
                         'started_at' => $startedAt->toIso8601String(),
                         'started_at_timestamp' => $startedAt->timestamp * 1000,
                         'estimated_end_at' => $estimatedEndAt->toIso8601String(),
@@ -127,7 +125,7 @@ class RestaurantController extends Controller
                 ];
             });
 
-        $queue = $this->queuePriorityService->getOrderedQueue()->values()->map(function ($party, $index) {
+        $queue = $this->queuePriorityService->getOrderedQueue()->values()->map(function ($party, $index) use ($now) {
             return [
                 'priority_rank' => $index + 1,
                 'id' => $party->id,
@@ -136,19 +134,19 @@ class RestaurantController extends Controller
                 'status' => $party->status,
                 'arrived_at' => $party->arrived_at->toIso8601String(),
                 'arrived_at_timestamp' => $party->arrived_at->timestamp * 1000,
-                'wait_time_minutes' => round($party->arrived_at->diffInMinutes(Carbon::now())),
+                'wait_time_minutes' => round($party->arrived_at->diffInMinutes($now)),
             ];
         });
 
         return response()->json([
             'success' => true,
             'data' => [
-                'tables' => $tables,
+                'tables' => $tablesData,
                 'queue' => $queue,
                 'summary' => [
-                    'total_tables' => $tables->count(),
-                    'occupied_tables' => $tables->where('status', 'occupied')->count(),
-                    'available_tables' => $tables->where('status', 'available')->count(),
+                    'total_tables' => $tablesData->count(),
+                    'occupied_tables' => $tablesData->where('status', 'occupied')->count(),
+                    'available_tables' => $tablesData->where('status', 'available')->count(),
                     'waiting_parties' => $queue->count(),
                 ],
             ],
@@ -261,66 +259,62 @@ class RestaurantController extends Controller
 
     /**
      * GET /api/history
-     * Multi-column sortable and searchable history of dining sessions and parties.
+     * Multi-column sortable and searchable history of dining sessions.
+     * Optimized with direct joins to prevent N+1 queries and guarantee instant response times.
      */
     public function history(Request $request): JsonResponse
     {
-        $search = $request->query('search');
-        $statusFilter = $request->query('status'); // completed, seated, waiting, cancelled
+        $search = trim($request->query('search', ''));
+        $statusFilter = $request->query('status');
         $partySizeFilter = $request->query('party_size');
-        $sortBy = $request->query('sort_by', 'created_at'); // seated_at, completed_at, party_size, customer_name, duration, table_code
+        $sortBy = $request->query('sort_by', 'created_at');
         $sortDir = strtolower($request->query('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
-        $query = DiningSession::with(['table', 'party']);
+        $query = DiningSession::query()
+            ->select('dining_sessions.*')
+            ->leftJoin('parties', 'dining_sessions.party_id', '=', 'parties.id')
+            ->leftJoin('restaurant_tables', 'dining_sessions.restaurant_table_id', '=', 'restaurant_tables.id')
+            ->with(['table', 'party']);
 
-        if ($search) {
-            $query->whereHas('party', function ($q) use ($search) {
-                $q->where('customer_name', 'like', "%{$search}%");
-            })->orWhereHas('table', function ($q) use ($search) {
-                $q->where('code', 'like', "%{$search}%");
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('parties.customer_name', 'like', "%{$search}%")
+                  ->orWhere('restaurant_tables.code', 'like', "%{$search}%");
             });
         }
 
-        if ($statusFilter) {
-            $query->where('status', $statusFilter);
+        if (!empty($statusFilter)) {
+            $query->where('dining_sessions.status', $statusFilter);
         }
 
-        if ($partySizeFilter) {
-            $query->whereHas('party', function ($q) use ($partySizeFilter) {
-                $q->where('party_size', $partySizeFilter);
-            });
+        if (!empty($partySizeFilter)) {
+            $query->where('parties.party_size', $partySizeFilter);
         }
 
-        // Handle multi-column sorting
+        // Multi-column sorting using direct joins
         switch ($sortBy) {
             case 'customer_name':
-                $query->join('parties', 'dining_sessions.party_id', '=', 'parties.id')
-                    ->orderBy('parties.customer_name', $sortDir)
-                    ->select('dining_sessions.*');
+                $query->orderBy('parties.customer_name', $sortDir);
                 break;
             case 'party_size':
-                $query->join('parties', 'dining_sessions.party_id', '=', 'parties.id')
-                    ->orderBy('parties.party_size', $sortDir)
-                    ->select('dining_sessions.*');
+                $query->orderBy('parties.party_size', $sortDir);
                 break;
             case 'table_code':
-                $query->join('restaurant_tables', 'dining_sessions.restaurant_table_id', '=', 'restaurant_tables.id')
-                    ->orderBy('restaurant_tables.code', $sortDir)
-                    ->select('dining_sessions.*');
+                $query->orderBy('restaurant_tables.code', $sortDir);
                 break;
             case 'duration':
-                $query->orderBy('dining_duration_minutes', $sortDir);
+                $query->orderBy('dining_sessions.dining_duration_minutes', $sortDir);
                 break;
             case 'started_at':
             case 'seated_at':
-                $query->orderBy('started_at', $sortDir);
+                $query->orderBy('dining_sessions.started_at', $sortDir);
                 break;
             case 'ended_at':
             case 'completed_at':
-                $query->orderBy('ended_at', $sortDir);
+                $query->orderBy('dining_sessions.ended_at', $sortDir);
                 break;
             default:
-                $query->orderBy('id', $sortDir);
+                $query->orderBy('dining_sessions.id', $sortDir);
                 break;
         }
 

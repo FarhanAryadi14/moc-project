@@ -15,6 +15,7 @@ export default function Dashboard() {
   // Filters & Sorting state
   const [queueSearch, setQueueSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [debouncedHistorySearch, setDebouncedHistorySearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [partySizeFilter, setPartySizeFilter] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
@@ -30,6 +31,14 @@ export default function Dashboard() {
     setToast({ text, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  // Debounce history search input (250ms delay) to prevent UIlag
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedHistorySearch(historySearch);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [historySearch]);
 
   // Fetch Status Data (/api/status)
   const fetchStatus = useCallback(async () => {
@@ -51,7 +60,7 @@ export default function Dashboard() {
     try {
       const query = new URLSearchParams({
         page: currentPage,
-        search: historySearch,
+        search: debouncedHistorySearch,
         status: statusFilter,
         party_size: partySizeFilter,
         sort_by: sortBy,
@@ -67,19 +76,22 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Failed to fetch history:', err);
     }
-  }, [currentPage, historySearch, statusFilter, partySizeFilter, sortBy, sortDir]);
+  }, [currentPage, debouncedHistorySearch, statusFilter, partySizeFilter, sortBy, sortDir]);
 
-  // Initial load & Polling interval (3 seconds)
+  // Independent status polling (runs smoothly every 3s without interrupting search/sort)
   useEffect(() => {
     fetchStatus();
-    fetchHistory();
-
     const interval = setInterval(() => {
       fetchStatus();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [fetchStatus, fetchHistory]);
+  }, [fetchStatus]);
+
+  // Fetch history on filter / sorting / search update
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
