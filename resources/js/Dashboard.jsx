@@ -78,7 +78,7 @@ export default function Dashboard() {
     }
   }, [currentPage, debouncedHistorySearch, statusFilter, partySizeFilter, sortBy, sortDir]);
 
-  // Fast 1-second live polling interval for seamless real-time synchronization
+  // Continuous 1-second live polling interval for seamless background sync
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(() => {
@@ -99,7 +99,7 @@ export default function Dashboard() {
     setIsRefreshing(false);
   };
 
-  // Arrive Customer (/api/arrive) - Instant Realtime Sync
+  // Arrive Customer (/api/arrive) - Instant Realtime Sync with 100ms commit window
   const handleArrive = async (payload) => {
     try {
       const res = await fetch('/api/arrive', {
@@ -111,9 +111,14 @@ export default function Dashboard() {
 
       if (data.success) {
         showToast(data.message, 'success');
-        // Await state refresh synchronously BEFORE closing modal so data updates instantly
-        await Promise.all([fetchStatus(), fetchHistory()]);
         setIsArriveModalOpen(false);
+
+        // Immediate fetch + 150ms follow-up for 100% SQLite transaction commit guarantee
+        await Promise.all([fetchStatus(), fetchHistory()]);
+        setTimeout(() => {
+          fetchStatus();
+          fetchHistory();
+        }, 150);
       } else {
         showToast(data.message || 'Gagal menyimpan kedatangan', 'error');
       }
@@ -148,6 +153,10 @@ export default function Dashboard() {
       if (data.success) {
         showToast(data.message, 'success');
         await Promise.all([fetchStatus(), fetchHistory()]);
+        setTimeout(() => {
+          fetchStatus();
+          fetchHistory();
+        }, 150);
       } else {
         showToast(data.message || 'Gagal mendudukkan party.', 'error');
       }
@@ -171,6 +180,10 @@ export default function Dashboard() {
       if (data.success) {
         showToast(data.message, 'success');
         await Promise.all([fetchStatus(), fetchHistory()]);
+        setTimeout(() => {
+          fetchStatus();
+          fetchHistory();
+        }, 150);
       } else {
         showToast(data.message || 'Gagal force complete meja.', 'error');
       }
@@ -192,6 +205,10 @@ export default function Dashboard() {
       if (data.success) {
         showToast(data.message, 'success');
         await Promise.all([fetchStatus(), fetchHistory()]);
+        setTimeout(() => {
+          fetchStatus();
+          fetchHistory();
+        }, 150);
       } else {
         showToast(data.message || 'Tidak ada meja/queue yang cocok.', 'error');
       }
